@@ -10,18 +10,18 @@
 @software: PyCharm 
 @file: ticket_book.py
 @time: 2018/10/22 18:54 
-@description：12306抢票
+@description：12306 抢票
 """
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver import ActionChains
 import time
+import configparser
 
-
-# 使用selenium登录的时候，不会保留之前保存的cookie信息，授权的信息都不存在
-
+depart_time = '2018-11-15'
 
 class QiangPiaoSpider(object):
     """
@@ -36,7 +36,10 @@ class QiangPiaoSpider(object):
         self.login_url = 'https://kyfw.12306.cn/otn/login/init'
 
         # 个人中心url
-        self.person_center_url = 'https://kyfw.12306.cn/otn/index/initMy12306'
+        # self.person_center_url = 'https://kyfw.12306.cn/otn/index/initMy12306'
+
+        # 个人中心url【改版后】
+        self.person_center_url = 'https://kyfw.12306.cn/otn/view/index.html'
 
         # 查询票的url
         self.search_ticket_url = 'https://kyfw.12306.cn/otn/leftTicket/init'
@@ -45,20 +48,22 @@ class QiangPiaoSpider(object):
         self.choose_passenger_url = 'https://kyfw.12306.cn/otn/confirmPassenger/initDc'
 
     def wait_input(self):
-        # 始发地
-        self.from_station = input("出发地：")
 
-        # 目的地
-        self.to_station = input('目的地：')
+        self.from_station = input('请输入始发地：')
+
+        self.to_station = input('请输入目的地：')
 
         # 出发时间，时间格式必须是：yyyy-MM-dd
-        self.depart_time = input('出发时间：')
+        # self.depart_time = input('出发时间：')
 
         # 乘客【们】
         self.passengers = input('乘客姓名（如果有多个乘客，用逗号隔开）：').split(",")
 
-        # 车次【们】
-        self.trains = input('车次（如果有多个车次，用逗号隔开）：')
+        # 车次类型
+        self.train_types = input('请选择车次类型【G：高铁：D：动车；Z：直达； T：特快； K：快速；L：其他(包含临客L) / 多种车次用逗号分开】：').split(",")
+
+        # 座位类型【选择一种车次】
+        self.seat_type = input('请输入座位类型【0：商务座；10：一等座；11：二等座；20：高级软卧；21：软卧；22：动卧；23：硬卧；30：软座；31：硬座；4：无座；5：其他】')
 
     def _login(self):
         """
@@ -66,15 +71,41 @@ class QiangPiaoSpider(object):
         :return: 内部方法，不想被外部调用；但是依旧是可以被外部调用的
         """
 
-        # 1.打开登录界面
+        # 1.打开登录页面
         self.driver.get(self.login_url)
 
-        # 2.手动登录
-        # 等待用户输入用户名和密码、验证码
-        # EC_url_to_be 当前的url是否相同
+        # 2.读取配置文件中的用户名和密码
+        config = configparser.ConfigParser()
+        config.read('user.cfg')
+        username = config.get('user', 'username')
+        password = config.get('user', 'password')
+
+        # 2.用户名、密码输入框、登录按钮
+        usernameInput = self.driver.find_element_by_id('username')
+        passwordInput = self.driver.find_element_by_id('password')
+        loginBtn = self.driver.find_element_by_id('loginSub')
+
+        # 3.写入数据到输入框中
+        usernameInput.clear()
+        passwordInput.clear()
+        usernameInput.send_keys(username)
+        passwordInput.send_keys(password)
+
+        # 4.手动输入验证码
+        # 10秒点击一次登录按钮
+        try:
+            while loginBtn:
+                time.sleep(10)
+                loginBtn.click()
+                loginBtn = self.driver.find_element_by_id('loginSub')
+        except Exception as e:
+            print(e)
+
+        # 5.显示等待完全加载出【个人中心页面】
         WebDriverWait(self.driver, 1000).until(
             EC.url_to_be(self.person_center_url))
-        print('登录成功')
+
+        # print('登录成功，到个人中心页面')
 
     def _order_ticket(self):
         """
@@ -83,23 +114,59 @@ class QiangPiaoSpider(object):
         """
         # 1.跳转到查票的界面
         self.driver.get(self.search_ticket_url)
-        print('到查票界面')
 
-        # 2.等待出发地、目的地、出发日期是否输入正确
-        # 注意：input标签：开放标签，非闭合标签；利用input中的value值来判断是否一致，不能使用闭合标签中的text来判断【EC.text_to_be_present_in_element】
-        WebDriverWait(self.driver, 1000).until(
-            EC.text_to_be_present_in_element_value((By.ID, "fromStationText"), self.from_station))
+        # 2.选择单程
+        self.driver.find_element_by_xpath('//label[@for="dc"]').click()
+        # 之所以要設置一個等待，是因為我在測試的時候發現，如果操作過快，在最後點擊搜索的時候，會卡在搜索狀態，一直顯示正在搜索。。。。。。
+        time.sleep(1)
 
-        WebDriverWait(self.driver, 1000).until(
-            EC.text_to_be_present_in_element_value((By.ID, "toStationText"), self.to_station))
+        # 3.出发地输入框、目的地输入框、出发时间输入框
+        fromStationInput = self.driver.find_element_by_id("fromStationText")
+        toStationInput = self.driver.find_element_by_id("toStationText")
+        departTimeInput = self.driver.find_element_by_id("train_date")
 
-        WebDriverWait(self.driver, 1000).until(
-            EC.text_to_be_present_in_element_value((By.ID, "train_date"), self.depart_time))
+        # 4.1 选择出发地
+        # 点击，输入出发地，列表中选择目的城市
+        ActionChains(self.driver).click(fromStationInput).send_keys(self.from_station).perform()
+        try:
+            list_0 = self.driver.find_elements_by_xpath('//div[@id="panel_cities"]//div/span[1]')
+            for vb in list_0:
+                if vb.text == self.from_station:
+                    time.sleep(1)
+                    vb.click()
+                    break
+                else:
+                    print('过滤掉这个城市')
+        except:
+            pass
+        time.sleep(1)
 
-        # 3.等待查询按钮是否可以点击
+        # 4.2 选择目的地
+        ActionChains(self.driver).click(toStationInput).send_keys(self.to_station).perform()
+        try:
+            list_01 = self.driver.find_elements_by_xpath('//div[@id="panel_cities"]//div/span[1]')
+            for vb2 in list_01:
+                if vb2.text == self.to_station:
+                    time.sleep(1)
+                    vb2.click()
+                    break
+                else:
+                    print('过滤掉这个城市')
+        except:
+            pass
+        time.sleep(1)
+
+        # 5.选择出发时间
+        js = "document.getElementById('train_date').removeAttribute('readonly')"  # del train_date readonly property
+        self.driver.execute_script(js)
+        departTimeInput.clear()
+        ActionChains(self.driver).click(departTimeInput).send_keys(depart_time).perform()
+        time.sleep(1)
+
+        # 3.显示等待【查询按钮】可以被点击
         WebDriverWait(self.driver, 1000).until(EC.element_to_be_clickable((By.ID, "query_ticket")))
 
-        # 4.如果按钮可以被点击，就执行点击事件【点击查询按钮】
+        # 4.点击【查询按钮】
         self.driver.find_element_by_id("query_ticket").click()
 
         # 5.等待票信息的出现【注意：这里必须等待】
@@ -107,81 +174,241 @@ class QiangPiaoSpider(object):
         WebDriverWait(self.driver, 1000).until(
             EC.presence_of_element_located((By.XPATH, ".//tbody[@id='queryLeftTable']/tr")))
 
-        # 6.过滤掉所有【拥有 datatran 属性的 tr 标签】【过滤不需要的信息：存储车次信息的tr标签】
+        # 6. 选择车次的种类【模拟点击】
+        train_type_dict = {
+            'G': '//input[@name="cc_type" and @value="G"]',  # 高铁
+            'D': '//input[@name="cc_type" and @value="D"]',  # 动车
+            'Z': '//input[@name="cc_type" and @value="Z"]',  # 直达
+            'T': '//input[@name="cc_type" and @value="T"]',  # 特快
+            'K': '//input[@name="cc_type" and @value="K"]',  # 快速
+            'L': '//input[@name="cc_type" and @value="QT"]',  # 其他【包含临客】
+        }
+
+        # 如果指定了车次类型，就筛选出对应的车次；否则默认选择【高铁】
+        for train_type in self.train_types:
+            if train_type in train_type_dict.keys():
+                self.driver.find_element_by_xpath(train_type_dict[train_type]).click()
+
+        # 7.获取过滤后的车次列表
+        trains = self._get_trains()
+
+        # print(trains)
+        # 某个元素没有某个属性 - not（）函数
+        # // tbody[ @ id = 'queryLeftTable'] / tr[not (@ style='display:none;')]
+
+        # 8.过滤掉没有用的数据
+        # 【拥有 datatran 属性的 tr 标签】【过滤不需要的信息：存储车次信息的tr标签】
         tr_lists = self.driver.find_elements_by_xpath(".//tbody[@id='queryLeftTable']/tr[not(@datatran)]")
 
-        # 7.遍历列表
+        # 9.遍历每一条车次数据，进行抢票
         for tr_element in tr_lists:
-            # 7.1 获取车次名称
+            # 9.1 获取车次名称
             train_number = tr_element.find_element_by_class_name('number').text
 
-            print('当前车次%s' % train_number)
+            # 9.2 获取车次座次的数目【11 种座位】
+            # 9.2.1 商务座、特等座的数目
+            special_seat_td_content = tr_element.find_element_by_xpath('.//td[2]').text
+            # 9.2.2 一等座
+            first_seat_td_content = tr_element.find_element_by_xpath('.//td[3]').text
+            # 9.2.3 二等座：第 4 个 td 标签里面的文本内容
+            second_seat_td_content = tr_element.find_element_by_xpath('.//td[4]').text
+            # 9.2.4 高级软卧
+            high_soft_wo_seat_td_content = tr_element.find_element_by_xpath('.//td[5]').text
+            # 9.2.5 软卧
+            soft_wo_seat_td_content = tr_element.find_element_by_xpath('.//td[6]').text
+            # 9.2.6 动卧
+            dong_wo_seat_td_content = tr_element.find_element_by_xpath('.//td[7]').text
+            # 9.2.7 硬卧
+            ying_wo_seat_td_content = tr_element.find_element_by_xpath('.//td[8]').text
+            # 9.2.8 软座
+            soft_seat_td_content = tr_element.find_element_by_xpath('.//td[9]').text
+            # 9.2.9 硬座
+            ying_seat_td_content = tr_element.find_element_by_xpath('.//td[10]').text
+            # 9.2.10 无座
+            no_seat_td_content = tr_element.find_element_by_xpath('.//td[11]').text
+            # 9.2.11 其他
+            other_seat_td_content = tr_element.find_element_by_xpath('.//td[12]').text
 
-            # 7.2 如果车次符合所选择的车次
-            if train_number in self.trains:
-                # 7.2.1 二等座：第 4 个 td 标签里面的文本内容
-                second_seat_td_content = tr_element.find_element_by_xpath('.//td[4]').text
+            # 0：商务座、特等座
+            # 10：一等座； 11：二等座
+            # 20：高级软卧； 21：软卧； 22：动卧； 23：硬卧
+            # 30：软座； 31：硬座
+            # 4：无座
+            # 5：其他
 
-                # 7.2.2 如果【有】或者【数字】代表有票
-                if second_seat_td_content == '有' or second_seat_td_content.isdigit:
-                    print(train_number + "有票")
+            nums_seat = {
+                '0': special_seat_td_content,
+                '10': first_seat_td_content,
+                '11': second_seat_td_content,
+                '20': high_soft_wo_seat_td_content,
+                '21': soft_wo_seat_td_content,
+                '22': dong_wo_seat_td_content,
+                '23': ying_wo_seat_td_content,
+                '30': soft_seat_td_content,
+                '31': ying_seat_td_content,
+                '4': no_seat_td_content,
+                '5': other_seat_td_content
+            }
 
-                    # 7.2.3 找到预定按钮
-                    orderBtn = tr_element.find_element_by_class_name('btn72')
+            # 9.3 选择的座位类型【默认是：高铁二等座】
+            choose_seat_content = nums_seat[
+                self.seat_type] if self.seat_type in nums_seat.keys() else second_seat_td_content
 
-                    # 7.2.4 点击预定按钮
-                    orderBtn.click()
+            # 9.4 如果【有】或者【数字】代表有票
+            if choose_seat_content == '有' or choose_seat_content.isdigit:
 
-                    # 7.2.5 等待来到【选择乘客】的界面
-                    WebDriverWait(self.driver, 1000).until(EC.url_to_be(self.choose_passenger_url))
-                    print('到达选择乘客的界面')
+                # 9.4.1 找到预定按钮
+                orderBtn = tr_element.find_element_by_class_name('btn72')
 
-                    # 7.2.6 等待【所有乘客】信息被加载进来
-                    WebDriverWait(self.driver, 1000).until(
-                        EC.presence_of_element_located((By.XPATH, './/ul[@id="normal_passenger_id"]/li')))
+                # 7.4.2 点击预定按钮
+                orderBtn.click()
 
-                    # 7.2.7 获取所有乘客的Label标签
-                    passenger_labels = self.driver.find_elements_by_xpath('.//ul[@id="normal_passenger_id"]/li/label')
+                # 9.4.3 等待来到【选择乘客】的界面
+                WebDriverWait(self.driver, 1000).until(EC.url_to_be(self.choose_passenger_url))
 
-                    # 7.2.8 选中乘客
-                    for passenger_label in passenger_labels:
-                        name = passenger_label.text
-                        if name in self.passengers:
-                            # 选中这个乘客
-                            passenger_label.click()
+                # 9.4.4 等待【所有乘客】信息被加载进来
+                WebDriverWait(self.driver, 1000).until(
+                    EC.presence_of_element_located((By.XPATH, './/ul[@id="normal_passenger_id"]/li')))
 
-                    # 7.2.9 获取【提交订单的按钮】，执行点击操作
-                    submitBtn = self.driver.find_element_by_id("submitOrder_id")
-                    submitBtn.click()
+                # 9.4.5 获取所有乘客的Label标签
+                passenger_labels = self.driver.find_elements_by_xpath('.//ul[@id="normal_passenger_id"]/li/label')
 
-                    # 注意：确认对话框需要时间加载，这里需要显示等待
-                    # 对话框出现【显示等待】
-                    WebDriverWait(self.driver, 1000).until(
-                        EC.presence_of_element_located((By.CLASS_NAME, 'dhtmlx_wins_body_outer')))
+                # 9.4.6 选中乘客【指定点击事件】
+                for passenger_label in passenger_labels:
+                    name = passenger_label.text
+                    if name in self.passengers:
+                        # 选中这个乘客
+                        passenger_label.click()
 
-                    # 确认按钮出现【显示等待】
-                    WebDriverWait(self.driver, 1000).until(
-                        EC.presence_of_element_located((By.ID, 'qr_submit_id')))
+                # 9.4.7 获取提交订单的按钮【执行点击操作】
+                submitBtn = self.driver.find_element_by_id("submitOrder_id")
+                submitBtn.click()
 
-                    confirmBtn = self.driver.find_element_by_id('qr_submit_id')
+                # 注意：【确认对话框】需要时间加载，这里需要显示等待
+                # 对话框出现【显示等待】
+                WebDriverWait(self.driver, 1000).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, 'dhtmlx_wins_body_outer')))
 
-                    # 确定订票
-                    confirmBtn.click()
+                # 确认按钮出现【显示等待】
+                WebDriverWait(self.driver, 1000).until(
+                    EC.presence_of_element_located((By.ID, 'qr_submit_id')))
 
-                    # 有可能此时【确定订票按钮】此时还不能进行点击，所有循环点击
+                # 9.4.8 获取确定按钮，指定点击事件
+                confirmBtn = self.driver.find_element_by_id('qr_submit_id')
+
+                # 确定订票
+                confirmBtn.click()
+
+                # 9.4.9 有可能此时【确定订票按钮】此时还不能进行点击，所有循环点击
+                try:
                     while confirmBtn:
                         confirmBtn.click()
                         confirmBtn = self.driver.find_element_by_id('qr_submit_id')
-
-                    return
-
-                else:
-                    print(train_number + "无票")
+                    break
+                except:
+                    print('成功抢到一张车票:%s' % (train_number))
+                    break
 
             else:
-                print("没有选择这个车次：" + train_number)
+                print(train_number + "暂时没有足够的票")
 
-            print("==" * 40)
+    def _get_trains(self):
+        """
+        获取查询列表中所有车次信息
+        :return:
+        """
+        # 车次
+        che_ci = []
+
+        # 出发站点
+        start_c = []
+
+        # 目的地站点
+        end_c = []
+
+        # 出发时间
+        start_t = []
+
+        # 到达时间
+        end_t = []
+
+        # 路程时间
+        total_time = []
+
+        # 商务座、特等座
+        seat_nums_vip = []
+
+        # 一等座
+        seat_nums_first = []
+
+        # 二等座
+        seat_nums_second = []
+
+        # 高级软卧
+        seat_nums_lie_advance_soft = []
+
+        # 软卧
+        seat_nums_lie_soft = []
+
+        # 动卧
+        seat_nums_lie_dong = []
+
+        # 硬卧
+        seat_nums_lie_ying = []
+
+        # 软座
+        seat_nums_norm_soft = []
+
+        # 硬座
+        seat_nums_norm = []
+
+        # 无座
+        seat_nums_no = []
+
+        # 其他
+        seat_nums_other = []
+
+        che_ci_elements = self.driver.find_elements_by_xpath('//tr[@style="display:none;"]')
+        for che_ci_element in che_ci_elements:
+            che_ci.append(che_ci_element.get_attribute('datatran'))
+
+        start_c_elements = self.driver.find_elements_by_xpath('//strong[@class="start-s"]')
+        for start_c_element in start_c_elements:
+            start_c.append(start_c_element.text)
+
+        end_c_elements = self.driver.find_elements_by_xpath('//div[@class="cdz"]/strong[2]')
+        for end_c_element in end_c_elements:
+            end_c.append(end_c_element.text)
+
+        start_t_elements = self.driver.find_elements_by_xpath('//div[@class="cds"]/strong[1]')
+        for start_t_element in start_t_elements:
+            start_t.append(start_t_element.text)
+
+        end_t_elements = self.driver.find_elements_by_xpath('//div[@class="cds"]/strong[2]')
+        for end_t_element in end_t_elements:
+            end_t.append(end_t_element.text)
+
+        total_time_elements1 = self.driver.find_elements_by_xpath('//div[@class="ls"]/strong[1]')
+        total_time_elements2 = self.driver.find_elements_by_xpath('//div[@class="ls"]/span[1]')
+        for index, value in enumerate(total_time_elements1):
+            total_time.append('历时：%s,%s' % (value.text, total_time_elements2[index].text))
+
+        # 组装成一个新的列表中
+        trains = []
+        for temp in zip(che_ci, start_c, end_c, start_t, end_t, total_time):
+            train_name, start_position, end_position, start_time, end_time, desc = temp
+            trains.append({
+                'train_name': train_name,
+                'start_position': start_position,
+                'end_position': end_position,
+                'start_time': start_time,
+                'end_time': end_time,
+                'desc': desc,
+            })
+
+        print(trains)
+
+        return trains
 
     def run(self):
         # 1.输入必要的信息
