@@ -10,7 +10,7 @@
 @software: PyCharm 
 @file: ticket_book.py
 @time: 2018/11/11
-@description：抢票
+@description：抢票【实用】
 """
 
 from selenium import webdriver
@@ -21,6 +21,7 @@ from selenium.webdriver import ActionChains
 import time
 from datetime import datetime
 import configparser
+from utils import get_current_date
 
 
 # 使用selenium登录的时候，不会保留之前保存的cookie信息，授权的信息都不存在
@@ -51,7 +52,7 @@ class QiangPiaoSpider(object):
         self.choose_passenger_url = 'https://kyfw.12306.cn/otn/confirmPassenger/initDc'
 
         # 刷票时间间隔【默认为：5秒】
-        self.refresh_interval = 2
+        self.refresh_interval = 1
 
     def wait_input(self):
 
@@ -102,13 +103,22 @@ class QiangPiaoSpider(object):
 
         # 4.手动输入验证码
         # 10秒点击一次登录按钮
-        try:
-            while loginBtn:
-                time.sleep(10)
+        # try:
+        while loginBtn:
+            time.sleep(10)
+
+            # 循环执行，这里可能导致loginBtn为空
+            loginBtn = self.driver.find_element_by_id('loginSub')
+
+            if loginBtn:
                 loginBtn.click()
-                loginBtn = self.driver.find_element_by_id('loginSub')
-        except Exception as e:
-            print(e)
+            else:
+                print('退出循环，当前url：%s' % (self.driver.current_url))
+                break
+
+        # except Exception as e:
+        #     print('产生异常了,当前url：' + self.driver.current_url)
+        #     print(e)
 
         # 5.显示等待完全加载出【个人中心页面】
         WebDriverWait(self.driver, 1000).until(
@@ -167,6 +177,11 @@ class QiangPiaoSpider(object):
         js = "document.getElementById('train_date').removeAttribute('readonly')"  # del train_date readonly property
         self.driver.execute_script(js)
         departTimeInput.clear()
+
+        # 出发时间：默认是今天
+        if not self.depart_time:
+            self.depart_time = get_current_date()
+
         ActionChains(self.driver).click(departTimeInput).send_keys(self.depart_time).perform()
         time.sleep(1)
 
@@ -175,7 +190,7 @@ class QiangPiaoSpider(object):
 
         # 7.定时抢票
         # 7.1 立即开始抢票
-        if self.timer == '0':
+        if self.timer == '0' or not self.timer:
             return
 
         # 7.2 定时抢票，等待
@@ -216,6 +231,8 @@ class QiangPiaoSpider(object):
 
         # 在 python 中，for … else 表示这样的意思，for 中的语句和普通的没有区别，else 中的语句会在循环正常执行完（即 for 不是通过 break 跳出而中断的）的情况下执行，while … else 也是一样。
         while True:
+
+            print('再查询一次')
 
             # 退出外层循环
             break_outer_loop = False
@@ -331,7 +348,7 @@ class QiangPiaoSpider(object):
                     # info = "所有的车次都没有票" if is_last_train else train_number + "暂时没有足够的票"
                     # print(info)
                     if is_last_train:
-                        print('MD，Fuck！所有列车的票都被抢光了！2 秒后重新刷票~')
+                        print('MD，Fuck！所有列车的票都被抢光了！1 秒后重新刷票~')
                         # 正常循环结束，执行for...else语句
                     else:
                         print(train_number + "暂时没有足够的票")
@@ -391,7 +408,7 @@ class QiangPiaoSpider(object):
             try:
                 # self.driver.switch_to.frame(self.driver.find_element_by_xpath('//*[@id="body_id"]/iframe[2]'))
 
-               # 多次点击
+                # 多次点击
                 confirmBtn.click()
                 while confirmBtn:
                     confirmBtn.click()
@@ -403,6 +420,17 @@ class QiangPiaoSpider(object):
                 print(e)
                 time.sleep(3)
                 return False
+
+        # confirmBtn.click()
+        #
+        # # 9.4.9 有可能此时【确定订票按钮】此时还不能进行点击，所有循环点击
+        # try:
+        #     while confirmBtn:
+        #         confirmBtn.click()
+        #
+        #     return True
+        # except:
+        #     return True
 
     def _get_trains(self):
         """
@@ -460,9 +488,20 @@ class QiangPiaoSpider(object):
         # 其他
         seat_nums_other = []
 
-        che_ci_elements = self.driver.find_elements_by_xpath('//tr[@style="display:none;"]')
+        # 注意：这里要过滤掉【已经停运】的车次
+        # 不包含某个属性
+        # che_ci_elements = self.driver.find_elements_by_xpath(
+        #     '//tbody[@id="queryLeftTable"]//tr[not(@datatran)]')
+
+        che_ci_elements = self.driver.find_elements_by_xpath(
+            '//tr[@style="display:none;"]')
+
         for che_ci_element in che_ci_elements:
             che_ci.append(che_ci_element.get_attribute('datatran'))
+
+        print('==' * 60)
+        print(che_ci)
+        print('==' * 60)
 
         start_c_elements = self.driver.find_elements_by_xpath('//strong[@class="start-s"]')
         for start_c_element in start_c_elements:
@@ -482,9 +521,12 @@ class QiangPiaoSpider(object):
 
         total_time_elements1 = self.driver.find_elements_by_xpath('//div[@class="ls"]/strong[1]')
         total_time_elements2 = self.driver.find_elements_by_xpath('//div[@class="ls"]/span[1]')
-        for index, value in enumerate(total_time_elements1):
-            total_time.append('历时：%s,%s' % (value.text, total_time_elements2[index].text))
 
+        for index, value in enumerate(total_time_elements1):
+            if len(total_time_elements2) > index:
+                total_time.append('历时：%s,%s' % (value.text, total_time_elements2[index].text))
+            else:
+                total_time.append('历时：格式未知')
         # 组装成一个新的列表中
         trains = []
         for temp in zip(che_ci, start_c, end_c, start_t, end_t, total_time):
@@ -511,7 +553,7 @@ class QiangPiaoSpider(object):
         self._search_proc()
 
         # 5.订票【个人中心 - 选择车次界面】
-        self._order_ticket()
+        # self._order_ticket()
 
 
 if __name__ == '__main__':
